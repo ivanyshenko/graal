@@ -1,0 +1,2 @@
+export PATH=/home/alex/Desktop/diploma/graal/mx:/home/alex/bin:/home/alex/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/usr/lib/jvm/java-9-oracle/bin:/usr/lib/jvm/java-9-oracle/db/bin
+mx benchmark dacapo-graal-compiler:sunflow --results-file ./out.json -- -Dgraal.TraceRAPolicy=MlDecision -Dgraal.TraceRAMLWeights=$1 -Dgraal.Timers=LIRPhaseTime_AllocationStage --jvm=server --jvm-config=graal-core-tracera -- -n $2

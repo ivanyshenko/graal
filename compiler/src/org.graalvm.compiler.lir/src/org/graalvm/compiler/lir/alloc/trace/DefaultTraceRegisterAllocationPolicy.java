@@ -62,7 +62,8 @@ public final class DefaultTraceRegisterAllocationPolicy {
         FreqBudget,
         LoopRatio,
         LoopBudget,
-        LoopMaxFreq
+        LoopMaxFreq,
+        MlDecision
     }
 
     public static class Options {
@@ -79,6 +80,10 @@ public final class DefaultTraceRegisterAllocationPolicy {
         public static final OptionKey<Double> TraceRAprobalilityThreshold = new OptionKey<>(0.8);
         @Option(help = "Sum Probability Budget Threshold", type = OptionType.Debug)
         public static final OptionKey<Double> TraceRAsumBudget = new OptionKey<>(0.5);
+
+        @Option(help = "Weights for MLDecision strategy", type = OptionType.Debug)
+        public static final OptionKey<String> TraceRAMLWeights = new OptionKey<>(null);
+
         @Option(help = "TraceRA allocation policy to use.", type = OptionType.Debug)
         public static final EnumOptionKey<TraceRAPolicies> TraceRAPolicy = new EnumOptionKey<>(TraceRAPolicies.Default);
         // @formatter:on
@@ -345,6 +350,117 @@ public final class DefaultTraceRegisterAllocationPolicy {
 
     }
 
+    /**
+     *
+     *
+     *
+     *
+     *
+     */
+    public static final class MLDecisionStrategy extends BottomUpStrategy{
+        private final double[] cumulativeTraceProbability;
+        private final double sumMethodProbability;
+        private final double[] traceNumLoop;
+//        private final double totalNumBlocks;
+        private final String[] args;
+
+        public MLDecisionStrategy(TraceRegisterAllocationPolicy plan) {
+            super(plan);
+            args = Options.TraceRAMLWeights.getValue(plan.getOptions()).split(",");
+            ArrayList<Trace> traces = getTraceBuilderResult().getTraces();
+
+            this.cumulativeTraceProbability = new double[traces.size()];
+            this.traceNumLoop = new double[traces.size()];
+            sumMethodProbability = init(traces, this.cumulativeTraceProbability, this.traceNumLoop);
+        }
+
+        @Override
+        public boolean shouldApplyTo(Trace trace) {
+            if (containsExceptionEdge(trace)) return false;
+
+            double sum = 0.0 +
+                    getBlockSumProbability(trace) * Double.valueOf(args[0]) +
+                    getNumBlocks(trace) * Double.valueOf(args[1]) +
+                    getNumLoops(trace) * Double.valueOf(args[2]) +
+                    getNumVars(trace) * Double.valueOf(args[3]) +
+                    getTraceRatio(trace) * Double.valueOf(args[4]);
+            double gate = Double.valueOf(args[5]);
+//            double w1=getBlockSumProbability(trace);
+//            double w2=getNumBlocks(trace);
+//            double w3=getNumLoops(trace);
+//            double w4=getNumVars(trace);
+//            double w5=getTraceRatio(trace);
+//            System.out.println(sum + " " +
+//                            w1 + " " +
+//                            w2 + " " +
+//                            w3 + " " +
+//                            w4 + " " +
+//                            w5);
+            return sum < gate;
+        }
+
+        private static double init(ArrayList<Trace> traces, double[] sumTraces, double[] numLoopTraces) {
+            double sumMethod = 0;
+            for (Trace trace : traces) {
+                double traceSum = 0;
+                double numLoop = 0;
+                for (AbstractBlockBase<?> block : trace.getBlocks()) {
+                    traceSum += block.probability();
+                    if (block.isLoopHeader()) numLoop++;
+                }
+                sumMethod += traceSum;
+                // store cumulative sum for trace
+                sumTraces[trace.getId()] = sumMethod;
+                numLoopTraces[trace.getId()] = numLoop;
+            }
+            return sumMethod;
+        }
+
+        private static boolean containsExceptionEdge(Trace trace) {
+            for (AbstractBlockBase<?> block : trace.getBlocks()) {
+                // check if one of the successors is an exception handler
+                for (AbstractBlockBase<?> succ : block.getSuccessors()) {
+                    if (succ.isExceptionEntry()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        public double getNumVars(Trace trace){
+            GlobalLivenessInfo livenessInfo = getGlobalLivenessInfo();
+            int maxNumVars = livenessInfo.getBlockIn(trace.getBlocks()[0]).length;
+            for (AbstractBlockBase<?> block : trace.getBlocks()) {
+                maxNumVars = Math.max(maxNumVars, livenessInfo.getBlockOut(block).length);
+            }
+            return maxNumVars;
+        }
+
+        public double getNumBlocks(Trace trace){
+            return trace.size();
+        }
+
+        public double getBlockAbsSumProbability(Trace trace){
+            return cumulativeTraceProbability[trace.getId()];
+        }
+
+        public double getBlockSumProbability(Trace trace){
+            return cumulativeTraceProbability[trace.getId()]/sumMethodProbability;
+        }
+
+        public double getNumLoops(Trace trace){
+            return traceNumLoop[trace.getId()];
+        }
+
+        public double getTraceRatio(Trace trace){
+            double numTraces = getTraceBuilderResult().getTraces().size();
+            double traceId = trace.getId();
+
+            return traceId/numTraces;
+        }
+    }
+
     public static final class TraceLinearScanStrategy extends AllocationStrategy {
 
         public TraceLinearScanStrategy(TraceRegisterAllocationPolicy plan) {
@@ -407,6 +523,9 @@ public final class DefaultTraceRegisterAllocationPolicy {
                 break;
             case LoopBudget:
                 plan.appendStrategy(new BottomUpDelegatingLoopStrategy(plan, new BottomUpFrequencyBudgetStrategy(plan)));
+                break;
+            case MlDecision:
+                plan.appendStrategy(new MLDecisionStrategy(plan));
                 break;
             default:
                 throw JVMCIError.shouldNotReachHere();
