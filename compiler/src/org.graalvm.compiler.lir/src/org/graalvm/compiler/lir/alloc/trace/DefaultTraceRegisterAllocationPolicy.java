@@ -361,17 +361,23 @@ public final class DefaultTraceRegisterAllocationPolicy {
         private final double[] cumulativeTraceProbability;
         private final double sumMethodProbability;
         private final double[] traceNumLoop;
+        private final double[] traceNumVars;
 //        private final double totalNumBlocks;
-        private final String[] args;
+        private final double[] args;
 
         public MLDecisionStrategy(TraceRegisterAllocationPolicy plan) {
             super(plan);
-            args = Options.TraceRAMLWeights.getValue(plan.getOptions()).split(",");
-            ArrayList<Trace> traces = getTraceBuilderResult().getTraces();
+            String[] strArgs = Options.TraceRAMLWeights.getValue(plan.getOptions()).split(",");
+            args = new double[strArgs.length];
+            for (int i = 0; i < strArgs.length; i++) {
+                args[i] = Double.valueOf(strArgs[i]);
+            }
 
+            ArrayList<Trace> traces = getTraceBuilderResult().getTraces();
             this.cumulativeTraceProbability = new double[traces.size()];
             this.traceNumLoop = new double[traces.size()];
-            sumMethodProbability = init(traces, this.cumulativeTraceProbability, this.traceNumLoop);
+            this.traceNumVars = new double[traces.size()];
+            sumMethodProbability = init(traces, this.cumulativeTraceProbability, this.traceNumLoop, this.traceNumVars);
         }
 
         @Override
@@ -379,12 +385,12 @@ public final class DefaultTraceRegisterAllocationPolicy {
             if (containsExceptionEdge(trace)) return false;
 
             double sum = 0.0 +
-                    getBlockSumProbability(trace) * Double.valueOf(args[0]) +
-                    getNumBlocks(trace) * Double.valueOf(args[1]) +
-                    getNumLoops(trace) * Double.valueOf(args[2]) +
-                    getNumVars(trace) * Double.valueOf(args[3]) +
-                    getTraceRatio(trace) * Double.valueOf(args[4]);
-            double gate = Double.valueOf(args[5]);
+                    getBlockSumProbability(trace) * args[0] +
+                    getNumBlocks(trace) * args[1] +
+                    getNumLoops(trace) * args[2] +
+                    getNumVars(trace) * args[3] +
+                    getTraceRatio(trace) * args[4];
+            double gate = args[5];
 //            double w1=getBlockSumProbability(trace);
 //            double w2=getNumBlocks(trace);
 //            double w3=getNumLoops(trace);
@@ -399,19 +405,22 @@ public final class DefaultTraceRegisterAllocationPolicy {
             return sum < gate;
         }
 
-        private static double init(ArrayList<Trace> traces, double[] sumTraces, double[] numLoopTraces) {
+        private double init(ArrayList<Trace> traces, double[] sumTraces, double[] numLoopTraces, double[] traceNumVars) {
             double sumMethod = 0;
+            GlobalLivenessInfo livenessInfo = getGlobalLivenessInfo();
             for (Trace trace : traces) {
                 double traceSum = 0;
                 double numLoop = 0;
+                int maxNumVars = livenessInfo.getBlockIn(trace.getBlocks()[0]).length;
                 for (AbstractBlockBase<?> block : trace.getBlocks()) {
                     traceSum += block.probability();
                     if (block.isLoopHeader()) numLoop++;
+                    maxNumVars = Math.max(maxNumVars, livenessInfo.getBlockOut(block).length);
                 }
                 sumMethod += traceSum;
-                // store cumulative sum for trace
                 sumTraces[trace.getId()] = sumMethod;
                 numLoopTraces[trace.getId()] = numLoop;
+                traceNumVars[trace.getId()] = maxNumVars;
             }
             return sumMethod;
         }
@@ -429,12 +438,7 @@ public final class DefaultTraceRegisterAllocationPolicy {
         }
 
         public double getNumVars(Trace trace){
-            GlobalLivenessInfo livenessInfo = getGlobalLivenessInfo();
-            int maxNumVars = livenessInfo.getBlockIn(trace.getBlocks()[0]).length;
-            for (AbstractBlockBase<?> block : trace.getBlocks()) {
-                maxNumVars = Math.max(maxNumVars, livenessInfo.getBlockOut(block).length);
-            }
-            return maxNumVars;
+            return traceNumVars[trace.getId()];
         }
 
         public double getNumBlocks(Trace trace){
@@ -456,7 +460,6 @@ public final class DefaultTraceRegisterAllocationPolicy {
         public double getTraceRatio(Trace trace){
             double numTraces = getTraceBuilderResult().getTraces().size();
             double traceId = trace.getId();
-
             return traceId/numTraces;
         }
     }
